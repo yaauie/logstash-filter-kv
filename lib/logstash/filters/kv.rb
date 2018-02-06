@@ -292,11 +292,32 @@ class LogStash::Filters::KV < LogStash::Filters::Base
     @remove_char_value_re = Regexp.new("[#{@remove_char_value}]") if @remove_char_value
     @remove_char_key_re = Regexp.new("[#{@remove_char_key}]") if @remove_char_key
 
-    valueRxString = "(?:\"([^\"]+)\"|'([^']+)'"
-    valueRxString += "|\\(([^\\)]+)\\)|\\[([^\\]]+)\\]|<([^>]+)>" if @include_brackets
-    valueRxString += "|((?:\\\\ |[^" + @field_split + "])+))"
-    @scan_re = Regexp.new("((?:\\\\ |[^" + @field_split + @value_split + "])+)\s*[" + @value_split + "]\s*" + valueRxString)
-    @value_split_re = /[#{@value_split}]/
+    field_split = /[#{@field_split}]/ # TODO: support multi-char splitters by replacing this regexp
+    value_split = /[#{@value_split}]/ # TODO: support multi-char splitters by replacing this regexp
+
+    value_pattern = begin
+      value_patterns = []
+      value_patterns << /"([^"]+)"/ # quoted double
+      value_patterns << /'([^']+)'/ # quoted single
+      if @include_brackets
+        value_patterns << /\(([^)]+)\)/ # bracketed paren
+        value_patterns << /\[([^\]]+)]/ # bracketed square
+        value_patterns << /<([^>]+)>/   # bracketed angle
+      end
+
+      # an unquoted value is a sequence of characters or escaped spaces before a `field_split`.
+      value_patterns << /((?:\\ |.)+?(?!=#{field_split}))/
+
+      Regexp.union(*value_patterns)
+    end
+
+    optional_whitespace = /\s*/
+
+    # a key is a sequence of characters or escaped spaces before either a `field_split` or a `value_split`.
+    key_pattern = /((?:\\ |.)+?(?=#{Regexp::union(field_split, value_split)}))/
+
+    @scan_re = /#{field_split}?#{key_pattern}#{optional_whitespace}(?:#{value_split}#{optional_whitespace}#{value_pattern})?(#{field_split}|$)/
+    @value_split_re = value_split
   end
 
   def filter(event)
@@ -356,6 +377,8 @@ class LogStash::Filters::KV < LogStash::Filters::Base
 
     text.scan(@scan_re) do |key, v1, v2, v3, v4, v5, v6|
       value = v1 || v2 || v3 || v4 || v5 || v6
+      next if value.nil? || value.empty?
+
       key = @trim_key ? key.gsub(@trim_key_re, "") : key
       key = @remove_char_key ? key.gsub(@remove_char_key_re, "") : key
       key = @transform_key ? transform(key, @transform_key) : key
