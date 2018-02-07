@@ -299,13 +299,15 @@ class LogStash::Filters::KV < LogStash::Filters::Base
     eof = /$/
 
     value_pattern = begin
+      # each component expression within value_pattern _must_ capture exactly once.
       value_patterns = []
-      value_patterns << /"([^"]+)"/ # quoted double
-      value_patterns << /'([^']+)'/ # quoted single
+
+      value_patterns << quoted_capture(%q(")) # quoted double
+      value_patterns << quoted_capture(%q(')) # quoted single
       if @include_brackets
-        value_patterns << /\(([^)]+)\)/ # bracketed paren
-        value_patterns << /\[([^\]]+)]/ # bracketed square
-        value_patterns << /<([^>]+)>/   # bracketed angle
+        value_patterns << quoted_capture('(', ')') # bracketed paren
+        value_patterns << quoted_capture('[', ']') # bracketed square
+        value_patterns << quoted_capture('<', '>') # bracketed angle
       end
 
       # an unquoted value is a _captured_ sequence of characters or escaped spaces before a `field_split` or EOF.
@@ -357,6 +359,26 @@ class LogStash::Filters::KV < LogStash::Filters::Base
 
   def has_value_splitter?(s)
     s =~ @value_split_re
+  end
+
+  # Helper function for generating single-capture `Regexp` that, when matching a string bound by the given quotes
+  # or brackets, will capture the content that is between the quotes or brackets.
+  #
+  # @api private
+  # @param quote_sequence [String] a character sequence that begins a quoted expression
+  # @param close_quote_sequence [String] a character sequence that ends a quoted expression; (default: quote_sequence)
+  # @return [Regexp] with a single capture group representing content that is between the given quotes
+  def quoted_capture(quote_sequence, close_quote_sequence=quote_sequence)
+    fail('quote_sequence must be non-empty!') if quote_sequence.nil? || quote_sequence.empty?
+    fail('close_quote_sequence must be non-empty!') if close_quote_sequence.nil? || close_quote_sequence.empty?
+
+    open_pattern = /#{Regexp.quote(quote_sequence)}/
+    close_pattern = /#{Regexp.quote(close_quote_sequence)}/
+
+    # matches a sequence of zero or more characters that is followed by the `close_quote_sequence`
+    quoted_value_pattern = /(?:.)*?(?=#{Regexp.quote(close_quote_sequence)})/
+
+    /#{open_pattern}(#{quoted_value_pattern})#{close_pattern}/
   end
 
   def transform(text, method)
