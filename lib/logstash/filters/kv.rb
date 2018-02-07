@@ -295,6 +295,9 @@ class LogStash::Filters::KV < LogStash::Filters::Base
     field_split = /[#{@field_split}]/ # TODO: support multi-char splitters by replacing this regexp
     value_split = /[#{@value_split}]/ # TODO: support multi-char splitters by replacing this regexp
 
+    optional_whitespace = /\s*/
+    eof = /$/
+
     value_pattern = begin
       value_patterns = []
       value_patterns << /"([^"]+)"/ # quoted double
@@ -305,18 +308,18 @@ class LogStash::Filters::KV < LogStash::Filters::Base
         value_patterns << /<([^>]+)>/   # bracketed angle
       end
 
-      # an unquoted value is a sequence of characters or escaped spaces before a `field_split`.
-      value_patterns << /((?:\\ |.)+?(?!=#{field_split}))/
+      # an unquoted value is a _captured_ sequence of characters or escaped spaces before a `field_split` or EOF.
+      value_patterns << /((?:\\ |.)+?)(?=#{Regexp::union(field_split, eof)})/
 
       Regexp.union(*value_patterns)
     end
 
-    optional_whitespace = /\s*/
 
-    # a key is a sequence of characters or escaped spaces before either a `field_split` or a `value_split`.
-    key_pattern = /((?:\\ |.)+?(?=#{Regexp::union(field_split, value_split)}))/
+    # a key is a _captured_ sequence of characters or escaped spaces before optional whitespace
+    # and followed by either a `value_split`, a `field_split`, or EOF.
+    key_pattern = /((?:\\ |.)+?)(?=#{optional_whitespace}#{Regexp::union(value_split, field_split, eof)})/
 
-    @scan_re = /#{field_split}?#{key_pattern}#{optional_whitespace}(?:#{value_split}#{optional_whitespace}#{value_pattern})?(#{field_split}|$)/
+    @scan_re = /#{field_split}?#{key_pattern}#{optional_whitespace}(?:#{value_split}#{optional_whitespace}#{value_pattern})?(?=#{Regexp::union(field_split, eof)})/
     @value_split_re = value_split
   end
 
@@ -375,8 +378,8 @@ class LogStash::Filters::KV < LogStash::Filters::Base
     include_keys = @include_keys.map{|key| event.sprintf(key)}
     exclude_keys = @exclude_keys.map{|key| event.sprintf(key)}
 
-    text.scan(@scan_re) do |key, v1, v2, v3, v4, v5, v6|
-      value = v1 || v2 || v3 || v4 || v5 || v6
+    text.scan(@scan_re) do |key, *value_candidates|
+      value = value_candidates.compact.first
       next if value.nil? || value.empty?
 
       key = @trim_key ? key.gsub(@trim_key_re, "") : key
