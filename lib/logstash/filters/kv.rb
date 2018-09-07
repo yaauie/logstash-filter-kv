@@ -263,6 +263,9 @@ class LogStash::Filters::KV < LogStash::Filters::Base
   #     }
   config :allow_duplicate_values, :validate => :boolean, :default => true
 
+  # A bool option for keeping empty or nil values.
+  config :allow_empty_values, :validate => :boolean, :default => false
+
   # A boolean specifying whether to treat square brackets, angle brackets,
   # and parentheses as value "wrappers" that should be removed from the value.
   # [source,ruby]
@@ -316,6 +319,8 @@ class LogStash::Filters::KV < LogStash::Filters::Base
   # a _value-splitter_ will be interpreted as an empty field.
   #
   config :whitespace, :validate => %w(strict lenient), :default => "lenient"
+
+  EMPTY_STRING = ''.freeze
 
   def register
     if @value_split.empty?
@@ -496,8 +501,8 @@ class LogStash::Filters::KV < LogStash::Filters::Base
     exclude_keys = @exclude_keys.map{|key| event.sprintf(key)}
 
     text.scan(@scan_re) do |key, *value_candidates|
-      value = value_candidates.compact.first
-      next if value.nil? || value.empty?
+      value = value_candidates.compact.first || EMPTY_STRING
+      next if value.empty? && !@allow_empty_values
 
       key = @trim_key ? key.gsub(@trim_key_re, "") : key
       key = @remove_char_key ? key.gsub(@remove_char_key_re, "") : key
